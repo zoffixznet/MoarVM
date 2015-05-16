@@ -1345,8 +1345,75 @@ static void optimize_bb(MVMThreadContext *tc, MVMSpeshGraph *g, MVMSpeshBB *bb) 
                 optimize_extop(tc, g, bb, ins);
         }
 
-
         ins = ins->next;
+    }
+
+    /* Now look at our successors. If any of them only have us as a predecessor
+     * and consist solely of a goto call, we can remove that indirection and
+     * the "dead bb" elimination will kick the BB out as well.
+     * We tend to generate jumplists that are followed by a whole bunch of
+     * "only goto" BBs.
+     * Luckily, any instruction that takes a BB and branches will be the very
+     * last in our block, but we have to be extra careful of handlers. */
+
+    if (bb->last_ins->info->opcode == MVM_OP_jumplist) {
+        MVMint16 sidx;
+        MVMSpeshBB **succ = bb->succ;
+        for (sidx = 0; sidx < bb->num_succ; sidx++) {
+            if (!succ[sidx])
+                continue;
+            if (succ[sidx]->first_ins == succ[sidx]->last_ins
+                    && succ[sidx]->first_ins->info->opcode == MVM_OP_goto) {
+                fprintf(stderr, "\n========\noptimizing %p's successor number %d: %p\n", bb, sidx, succ[sidx]);
+                MVMSpeshBB *indirect_succ = succ[sidx]->first_ins->operands[0].ins_bb;
+
+                /* We'll search for our block in our direct successor's predecessors */
+                MVMint16 pidx;
+
+                /* And then we'll search for the direct successor in the indirect successor's predecessors */
+                MVMint16 spidx;
+
+                /* For removing preds and succs, we need to shuffle entries in the list around,
+                 * so we need a little iteration variable */
+                MVMint16 k;
+
+                fprintf(stderr, "succ %d (%p) has %d preds (the preds array is at %p)\n", sidx, succ[sidx], succ[sidx]->num_pred, succ[sidx]->pred);
+                for (pidx = 0; pidx < succ[sidx]->num_pred; pidx++) {
+                    fprintf(stderr, "is predecessor number %d it? (%p == %p)\n", pidx, succ[sidx]->pred[pidx], bb);
+                    if (succ[sidx]->pred[pidx] == bb) {
+                        fprintf(stderr, "yes.\n");
+                        break;
+                    }
+                }
+
+                if (succ[sidx]->pred[pidx] != bb) {
+                    MVM_panic(1, "When trying to optimize a BB's successors, spesh couldn't find a block in it's successor's predecessor list.");
+                }
+
+                 /*Delete us out of the successor's predecessor list by shuffling and nulling */
+                for (k = pidx; k < succ[sidx]->num_pred; k++) {
+                    succ[sidx]->pred[k] = succ[sidx]->pred[k + 1];
+                }
+                succ[sidx]->pred[succ[sidx]->num_pred] = NULL;
+                
+
+                for (spidx = 0; spidx < succ[sidx]->succ[0]->num_pred; spidx++) {
+                    if (succ[sidx]->succ[0]->pred[spidx] == succ[sidx]) {
+                        break;
+                    }
+                }
+
+                if (succ[sidx]->succ[0]->pred[spidx] != succ[sidx]) {
+                    MVM_panic(1, "When trying to optimize a BB's successors, spesh couldn't find a block in it's successor's successor's predecessor list.");
+                }
+
+                /* Now we can do a little switch-a-roo. */
+                
+                succ[sidx]->succ[0]->pred[spidx] = bb;
+                succ[sidx] = indirect_succ;
+                
+            }
+        }
     }
 
     /* Visit children. */
