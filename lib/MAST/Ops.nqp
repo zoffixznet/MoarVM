@@ -760,7 +760,8 @@ BEGIN {
     1882,
     1883,
     1883,
-    1884);
+    1884,
+    1886);
     MAST::Ops.WHO<@counts> := nqp::list_i(0,
     2,
     2,
@@ -1518,7 +1519,8 @@ BEGIN {
     1,
     0,
     1,
-    2);
+    2,
+    4);
     MAST::Ops.WHO<@values> := nqp::list_i(10,
     8,
     18,
@@ -3404,7 +3406,11 @@ BEGIN {
     65,
     65,
     65,
-    16);
+    16,
+    56,
+    24,
+    16,
+    128);
     MAST::Ops.WHO<%codes> := nqp::hash('no_op', 0,
     'const_i8', 1,
     'const_i16', 2,
@@ -4162,7 +4168,8 @@ BEGIN {
     'prof_enternative', 754,
     'prof_exit', 755,
     'prof_allocated', 756,
-    'ctw_check', 757);
+    'ctw_check', 757,
+    'coverage_log', 758);
     MAST::Ops.WHO<@names> := nqp::list_s('no_op',
     'const_i8',
     'const_i16',
@@ -4920,5 +4927,6 @@ BEGIN {
     'prof_enternative',
     'prof_exit',
     'prof_allocated',
-    'ctw_check');
+    'ctw_check',
+    'coverage_log');
 }
