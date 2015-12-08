@@ -4,19 +4,22 @@ static void instrument_graph(MVMThreadContext *tc, MVMSpeshGraph *g) {
     MVMSpeshBB *bb = g->entry->linear_next;
     MVMuint16 array_slot = 0;
 
-    MVMint32 last_line_number;
-    MVMint32 last_filename;
-
-    char *line_report_store = MVM_calloc(g->num_bbs, sizeof(char));
-    MVMuint16 allocd_slots = g->num_bbs;
+    char *line_report_store = MVM_calloc(g->sf->body.num_annotations, sizeof(char));
+    MVMuint16 allocd_slots = g->sf->body.num_annotations;
 
     while (bb) {
         MVMSpeshIns *ins = bb->first_ins;
         MVMSpeshIns *log_ins;
 
+        MVMint32 end_of_bb_pc;
+
         MVMBytecodeAnnotation *bbba = MVM_bytecode_resolve_annotation(tc, &g->sf->body, bb->initial_pc);
         MVMuint32 line_number;
         MVMuint32 filename_string_index;
+
+        MVMint32 last_line_number = -1;
+        MVMint32 last_filename = -1;
+
         if (bbba) {
             line_number = bbba->line_number;
             filename_string_index = bbba->filename_string_heap_index;
@@ -25,6 +28,12 @@ static void instrument_graph(MVMThreadContext *tc, MVMSpeshGraph *g) {
             line_number = -1;
             bb = bb->linear_next;
             continue;
+        }
+
+        if (bb->linear_next) {
+            end_of_bb_pc = bb->linear_next->initial_pc;
+        } else {
+            end_of_bb_pc = g->sf->body.bytecode_size;
         }
 
         /* skip PHI instructions, to make sure PHI only occur uninterrupted after start-of-bb */
@@ -43,26 +52,52 @@ static void instrument_graph(MVMThreadContext *tc, MVMSpeshGraph *g) {
             continue;
         }
 
-        log_ins = MVM_spesh_alloc(tc, g, sizeof(MVMSpeshIns));
-        log_ins->info        = MVM_op_get_op(MVM_OP_coverage_log);
-        log_ins->operands    = MVM_spesh_alloc(tc, g, 4 * sizeof(MVMSpeshOperand));
+        for (;;) {
+            MVMBytecodeAnnotation *new_bbba;
+            MVMint32 offs;
 
-        log_ins->operands[0].lit_str_idx = filename_string_index;
-        log_ins->operands[1].lit_i32 = line_number;
+            log_ins = MVM_spesh_alloc(tc, g, sizeof(MVMSpeshIns));
+            log_ins->info        = MVM_op_get_op(MVM_OP_coverage_log);
+            log_ins->operands    = MVM_spesh_alloc(tc, g, 4 * sizeof(MVMSpeshOperand));
 
-        if (last_line_number == line_number && last_filename == filename_string_index) {
-            /* Consecutive BBs with the same line number and filename should
-             * share one "already reported" slot. */
-            log_ins->operands[2].lit_i32 = array_slot;
-        } else {
-            log_ins->operands[2].lit_i32 = array_slot++;
-            last_line_number = line_number;
-            last_filename = filename_string_index;
+            log_ins->operands[0].lit_str_idx = filename_string_index;
+            log_ins->operands[1].lit_i32     = line_number;
+
+            if (last_line_number == line_number && last_filename == filename_string_index) {
+                /* Consecutive BBs with the same line number and filename should
+                 * share one "already reported" slot. */
+                log_ins->operands[2].lit_i32 = array_slot;
+            } else {
+                log_ins->operands[2].lit_i32 = array_slot++;
+                last_line_number = line_number;
+                last_filename = filename_string_index;
+            }
+
+            log_ins->operands[3].lit_i64 = (MVMint64)line_report_store;
+
+            MVM_spesh_manipulate_insert_ins(tc, bb, ins, log_ins);
+
+            /* Let's see if we find any more line number annotations before reaching the next BB. */
+            for (offs = bb->initial_pc + 2; offs < end_of_bb_pc; offs += 2) {
+                new_bbba = MVM_bytecode_resolve_annotation(tc, &g->sf->body, offs);
+                if (new_bbba) {
+                    line_number = new_bbba->line_number;
+                    filename_string_index = new_bbba->filename_string_heap_index;
+                    MVM_free(new_bbba);
+
+                    if (line_number != last_line_number || filename_string_index != last_filename) {
+                        last_line_number = line_number;
+                        last_filename = filename_string_index;
+                        break;
+                    }
+                } else {
+                    offs = end_of_bb_pc + 2;
+                    break;
+                }
+            }
+            if (offs >= end_of_bb_pc)
+                break;
         }
-
-        log_ins->operands[3].lit_i64 = (MVMint64)line_report_store;
-
-        MVM_spesh_manipulate_insert_ins(tc, bb, ins, log_ins);
 
         bb = bb->linear_next;
     }
