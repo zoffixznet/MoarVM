@@ -81,13 +81,14 @@ sub MAIN(Str $file where *.IO.e, Str $source where *.IO.e, Str $filename? = $sou
             $outfile.say(finish_html);
             $outfile.close;
 
-            say "line $num; wrote $path";
+            note "line $num; wrote $path";
             %stats{$current_source}<covered>    = $covered;
             %stats{$current_source}<uncovered>  = $uncovered;
             %stats{$current_source}<ignored>    = $ignored;
             %stats{$current_source}<percentage> = 100 * $covered / ($covered + $uncovered);
             %stats{$current_source}<total>      = $covered + $uncovered + $ignored;
             %stats{$current_source}<path>       = $path.subst("coverage/", "");
+            %stats{$current_source}<source_pos> = @file_ranges[$curfile-1][0]+1;
 
             $covered = 0;
             $uncovered = 0;
@@ -105,7 +106,7 @@ sub MAIN(Str $file where *.IO.e, Str $source where *.IO.e, Str $filename? = $sou
         } elsif $class eq "c" {
             $covered++;
         }
-        @lines.push: "<li class=\"$class\">$text.subst("<", "&lt;", :g)"; # skip the </li> because yay html!
+        @lines.push: qq[<li class="$class">$text.subst("<", "&lt;", :g)]; # skip the </li> because yay html!
     }
 
     sub make_html($sourcefile) {
@@ -124,11 +125,11 @@ sub MAIN(Str $file where *.IO.e, Str $source where *.IO.e, Str $filename? = $sou
     }
 
     sub finish_html() {
-        qq:to/TMPL/;
-                </ol>
-            </body>
-            </html>
-            TMPL
+        q:to/TMPL/;
+               </ol>
+           </body>
+           </html>
+           TMPL
     }
     
     # also build a little overview page
@@ -142,8 +143,9 @@ sub MAIN(Str $file where *.IO.e, Str $source where *.IO.e, Str $filename? = $sou
             </head>
         TMPL
 
-        $outfile.say: qq:to/TMPL/;
-            <table id="coverage">
+        $outfile.say: q:to/TMPL/;
+            <table id="coverage" class="sort">
+
                 <thead>
                     <tr>
                         <th>Filename</th>
@@ -152,8 +154,10 @@ sub MAIN(Str $file where *.IO.e, Str $source where *.IO.e, Str $filename? = $sou
                         <th>Uncovered</th>
                         <th>Ignored</th>
                         <th>Total</th>
+                        <th>Line number in source file</th>
                     </tr>
                 </thead>
+
                 <tbody>
         TMPL
 
@@ -168,11 +172,12 @@ sub MAIN(Str $file where *.IO.e, Str $source where *.IO.e, Str $filename? = $sou
                         <td> $v<uncovered> </td>
                         <td> $v<ignored> </td>
                         <td> $v<total> </td>
+                        <td> $v<source_pos> </td>
                     </tr>
             TMPL
         }
 
-        $outfile.say: qq:to/TMPL/;
+        $outfile.say: q:to/TMPL/;
                 </tbody>
             </table>
             <script type="text/javascript" src="tablesort.js"></script>
@@ -226,7 +231,7 @@ my $*tablesort = q:to/TABLESORT/;
  * http://tristen.ca/tablesort/demo/
  * Copyright (c) 2016 ; Licensed MIT
 */!
-;(function() {
+(function() {
   function Tablesort(el, options) {
     if (!(this instanceof Tablesort)) return new Tablesort(el, options);
 
