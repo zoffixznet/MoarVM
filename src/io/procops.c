@@ -135,7 +135,7 @@ static void spawn_on_exit(uv_process_t *req, MVMint64 exit_status, int term_sign
 
 static void setup_process_stdio(MVMThreadContext *tc, MVMObject *handle, uv_process_t *process,
         uv_stdio_container_t *stdio, int fd, MVMint64 flags, const char *op) {
-    if (flags & MVM_PIPE_CAPTURE) {
+    if (flags & MVM_PIPE_CAPTURE || fd == 2 && (flags & MVM_PIPE_MERGED)) {
         MVMIOSyncPipeData *pipedata;
 
         if (REPR(handle)->ID != MVM_REPR_ID_MVMOSHandle)
@@ -144,7 +144,9 @@ static void setup_process_stdio(MVMThreadContext *tc, MVMObject *handle, uv_proc
         pipedata           = (MVMIOSyncPipeData *)((MVMOSHandle *)handle)->body.data;
         pipedata->process  = process;
 
-        stdio->flags       = UV_CREATE_PIPE | (fd == 0 ? UV_READABLE_PIPE : UV_WRITABLE_PIPE);
+        stdio->flags       = fd == 0 ? UV_READABLE_PIPE : UV_WRITABLE_PIPE;
+        if (fd != 2 || fd == 2 && !(flags & MVM_PIPE_MERGED))
+            stdio->flags      |= UV_CREATE_PIPE;
         stdio->data.stream = pipedata->ss.handle;
     }
     else if (flags & MVM_PIPE_INHERIT) {
@@ -160,6 +162,31 @@ static void setup_process_stdio(MVMThreadContext *tc, MVMObject *handle, uv_proc
 
             body.ops->pipeable->bind_stdio_handle(tc, ((MVMOSHandle *)handle), stdio, process);
         }
+    }
+    else
+        stdio->flags = UV_IGNORE;
+}
+
+share_process_stdio(tc, process, &process_stdio[1], flags >> 3, "shell");
+
+static void share_process_stdio(MVMThreadContext *tc, uv_process_t *process,
+        uv_stdio_container_t *out_container, MVMint64 out_flags, uv_stdio_container_t *err_container, const char *op) {
+    if (flags & MVM_PIPE_CAPTURE) {
+        MVMIOSyncPipeData *pipedata;
+
+        if (REPR(handle)->ID != MVM_REPR_ID_MVMOSHandle)
+            MVM_exception_throw_adhoc(tc, "%s requires an object with REPR MVMOSHandle", op);
+
+        pipedata           = (MVMIOSyncPipeData *)((MVMOSHandle *)handle)->body.data;
+        pipedata->process  = process;
+
+        err_container->flags       = UV_READABLE_PIPE;
+        err_container->flags      |= UV_INHERIT_STREAM;
+        err_container->data.stream = out_container->ss.handle;
+    }
+    else if (flags & MVM_PIPE_INHERIT) {
+        stdio->flags   = UV_INHERIT_FD;
+        stdio->data.fd = 1;
     }
     else
         stdio->flags = UV_IGNORE;
@@ -206,8 +233,11 @@ MVMint64 MVM_proc_shell(MVMThreadContext *tc, MVMString *cmd, MVMString *cwd, MV
 
     setup_process_stdio(tc, in,  process, &process_stdio[0], 0, flags,      "shell");
     setup_process_stdio(tc, out, process, &process_stdio[1], 1, flags >> 3, "shell");
-    if (!(flags & MVM_PIPE_MERGED_OUT_ERR))
+    if (flags & MVM_PIPE_MERGED_OUT_ERR) {
+        share_process_stdio(tc, process, &process_stdio[1], flags >> 3, "shell");
+    } else {
         setup_process_stdio(tc, err, process, &process_stdio[2], 2, flags >> 6, "shell");
+    }
 
     process_options.stdio       = process_stdio;
     process_options.file        = _cmd;
@@ -215,11 +245,7 @@ MVMint64 MVM_proc_shell(MVMThreadContext *tc, MVMString *cmd, MVMString *cwd, MV
     process_options.cwd         = _cwd;
     process_options.flags       = UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS | UV_PROCESS_WINDOWS_HIDE;
     process_options.env         = _env;
-    if (flags & MVM_PIPE_MERGED_OUT_ERR) {
-        process_options.stdio_count = 2;
-    }
-    else
-        process_options.stdio_count = 3;
+    process_options.stdio_count = 3;
     process_options.exit_cb     = spawn_on_exit;
     if (flags & (MVM_PIPE_CAPTURE_IN | MVM_PIPE_CAPTURE_OUT | MVM_PIPE_CAPTURE_ERR)) {
         process_still_running = 1;
@@ -288,8 +314,7 @@ MVMint64 MVM_proc_spawn(MVMThreadContext *tc, MVMObject *argv, MVMString *cwd, M
 
     setup_process_stdio(tc, in,  process, &process_stdio[0], 0, flags,      "spawn");
     setup_process_stdio(tc, out, process, &process_stdio[1], 1, flags >> 3, "spawn");
-    if (!(flags & MVM_PIPE_MERGED_OUT_ERR))
-        setup_process_stdio(tc, err, process, &process_stdio[2], 2, flags >> 6, "spawn");
+    setup_process_stdio(tc, err, process, &process_stdio[2], 2, flags >> 6, "spawn");
 
     process_options.stdio       = process_stdio;
     process_options.file        = arg_size ? args[0] : NULL;
@@ -297,11 +322,7 @@ MVMint64 MVM_proc_spawn(MVMThreadContext *tc, MVMObject *argv, MVMString *cwd, M
     process_options.cwd         = _cwd;
     process_options.flags       = UV_PROCESS_WINDOWS_HIDE;
     process_options.env         = _env;
-    if (flags & MVM_PIPE_MERGED_OUT_ERR) {
-        process_options.stdio_count = 2;
-    }
-    else
-        process_options.stdio_count = 3;
+    process_options.stdio_count = 3;
     process_options.exit_cb     = spawn_on_exit;
     if (flags & (MVM_PIPE_CAPTURE_IN | MVM_PIPE_CAPTURE_OUT | MVM_PIPE_CAPTURE_ERR)) {
         process->data = MVM_calloc(1, sizeof(MVMint64));

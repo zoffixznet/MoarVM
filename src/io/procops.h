@@ -1,6 +1,9 @@
 #define MVM_PIPE_INHERIT        1
 #define MVM_PIPE_IGNORE         2
 #define MVM_PIPE_CAPTURE        4
+/* Only valid when fd is 2! */
+#define MVM_PIPE_MERGED         8
+
 #define MVM_PIPE_INHERIT_IN     1
 #define MVM_PIPE_IGNORE_IN      2
 #define MVM_PIPE_CAPTURE_IN     4
